@@ -1,0 +1,79 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.platform }}
+    strategy:
+      matrix:
+        include:
+          # Statically linked with musl so it runs on any Linux distro.
+          - { platform: linux-x64, target: x86_64-unknown-linux-musl, os: ubuntu-latest }
+          - { platform: darwin-arm64, target: aarch64-apple-darwin, os: macos-latest }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Tag matches Cargo.toml
+        run: |
+          version=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match Cargo.toml version $version"
+            exit 1
+          fi
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - run: cargo test --locked
+      - run: cargo build --release --locked --target ${{ matrix.target }}
+      - name: Smoke test
+        run: target/${{ matrix.target }}/release/secop --version
+      - name: Package
+        run: |
+          name="secop-${GITHUB_REF_NAME#v}-${{ matrix.platform }}"
+          mkdir -p "out/$name"
+          cp "target/${{ matrix.target }}/release/secop" LICENSE README.md "out/$name/"
+          tar -C out -czf "$name.tar.gz" "$name"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.platform }}
+          path: secop-*.tar.gz
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Checksums
+        run: |
+          cd artifacts
+          sha256sum secop-*.tar.gz > checksums.txt
+          cat checksums.txt
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > notes.md <<'NOTES'
+          ## Install
+
+          ```sh
+          brew install brielov/tap/secop
+          ```
+
+          Or download the archive for your platform below, verify it against `checksums.txt`, and put `secop` on your PATH.
+          NOTES
+          gh release create "$GITHUB_REF_NAME" artifacts/* -R "$GITHUB_REPOSITORY" \
+            --title "secop ${GITHUB_REF_NAME#v}" --notes-file notes.md --verify-tag

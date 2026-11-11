@@ -1,0 +1,18 @@
+[package]
+name = "secop"
+version = "0.1.0"
+edition = "2024"
+description = "Encrypt text or files with a passphrase to share them over insecure channels"
+license = "MIT"
+repository = "https://github.com/brielov/secop"
+
+[dependencies]
+age = "0.12.1"
+anyhow = "1.0.104"
+base64 = "0.23.1"
+rpassword = "7.5.5"
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1
